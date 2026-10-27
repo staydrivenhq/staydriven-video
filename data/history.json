@@ -1,1 +1,41 @@
-{"posts": [], "used_footage": [], "long_formats": [], "short_styles": []}
+{
+ "posts": [
+  {
+   "date": "2026-10-27",
+   "kind": "short",
+   "theme": "stop waiting for the perfect moment",
+   "format": "hard_truth",
+   "title": "The Lie Keeping You Stuck",
+   "youtube": "wOaRLs7uiiY",
+   "facebook": "1670560417974178",
+   "instagram": "18148335268577234"
+  }
+ ],
+ "used_footage": [
+  "pb:236256",
+  "pb:333699",
+  "pb:342229",
+  "pb:377063",
+  "pb:291821",
+  "pb:348909",
+  "pb:327060",
+  "pb:204035",
+  "pb:215869",
+  "pb:266769",
+  "pb:192042",
+  "pb:213633",
+  "pb:309911",
+  "pb:240973",
+  "pb:233390",
+  "pb:184510",
+  "pb:206294",
+  "pb:283431",
+  "pb:217105",
+  "pb:160975",
+  "pb:181786"
+ ],
+ "long_formats": [],
+ "short_styles": [
+  "hard_truth"
+ ]
+}
