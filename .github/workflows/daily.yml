@@ -1,0 +1,111 @@
+# STAY DRIVEN autopilot (free GitHub Actions)
+# Long video: 10:41 UTC = US Eastern ~6:41 AM (Bangladesh 4:41 PM)
+# Short/Reel: 22:41 UTC = US Eastern ~6:41 PM (Bangladesh 4:41 AM)
+name: Stay Driven daily
+
+on:
+  schedule:
+    - cron: "41 10 * * *"
+    - cron: "41 22 * * *"
+  workflow_dispatch:
+    inputs:
+      kind:
+        description: "long ba short"
+        type: choice
+        options: [short, long]
+        default: short
+      dry_run:
+        description: "Shudhu video banabe, post korbe na (test)"
+        type: boolean
+        default: true
+      voice_test:
+        description: "Voice sample banabe (video na)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+concurrency:
+  group: stay-driven
+  cancel-in-progress: false
+
+jobs:
+  make:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install ffmpeg (ready-made, fast)
+        run: |
+          curl -sSL --retry 3 -o ffmpeg.tar.xz \
+            "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"
+          mkdir -p ffbin && tar -xf ffmpeg.tar.xz -C ffbin --strip-components=1
+          echo "$PWD/ffbin/bin" >> "$GITHUB_PATH"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Cache speech-timing model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: whisper-base-en-v1
+
+      - run: pip install -r requirements.txt
+
+      - name: Make (and publish) today's video
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
+          SD_TOKEN_URL: ${{ secrets.SD_TOKEN_URL }}
+          SD_TOKEN_SECRET: ${{ secrets.SD_TOKEN_SECRET }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          FB_PAGE_TOKEN: ${{ secrets.FB_PAGE_TOKEN }}
+          IG_USER_ID: ${{ secrets.IG_USER_ID }}
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            if [ "${{ github.event.schedule }}" = "41 10 * * *" ]; then KIND=long; else KIND=short; fi
+            ARGS="--kind $KIND"
+          else
+            ARGS="--kind ${{ inputs.kind }}"
+            [ "${{ inputs.dry_run }}" = "true" ] && ARGS="$ARGS --dry-run"
+            [ "${{ inputs.voice_test }}" = "true" ] && ARGS="--voice-test"
+          fi
+          echo "Running: python main.py $ARGS"
+          python main.py $ARGS
+
+      - name: Keep the files 5 days (download from this page)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stay-driven-${{ github.run_number }}
+          path: |
+            output/**/*.mp4
+            output/**/thumbnail.jpg
+            output/**/script.json
+            output/**/captions.srt
+            output/voice-test/*
+            !output/**/footage.mp4
+          retention-days: 5
+          if-no-files-found: ignore
+
+      - name: Save history (no repeated topics or footage)
+        if: always()
+        run: |
+          git config user.name "stay-driven-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add data/history.json || true
+          if ! git diff --cached --quiet; then
+            git commit -m "history $(date -u +%F-%H%M)"
+            git pull --rebase -X theirs || true
+            git push || true
+          fi
