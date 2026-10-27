@@ -1,0 +1,82 @@
+# ================= STAY DRIVEN — settings =================
+# Ei file e shudhu value bodlan. Code touch korar dorkar nai.
+
+channel_name: "Stay Driven"
+channel_handle: "@TheStayDrivenHQ"
+
+# ---------- Kothay post hobe ----------
+youtube: true
+facebook: true
+instagram: true
+
+youtube_privacy: "public"        # public / unlisted / private
+youtube_category_id: "22"        # 22 = People & Blogs, 27 = Education
+youtube_first_comment: true      # upload er por channel nije ekta engaging comment korbe
+youtube_upload_captions: true    # nikhut subtitle (SRT) YouTube e upload
+
+# Meta (Facebook + Instagram) er niyom: "realistic-sounding audio that was digitally created"
+# post korle "AI info" label on rakhar kotha. Safe thakar jonno true rakha holo.
+meta_ai_label: true
+
+# ---------- AI (script) ----------
+llm_provider: "gemini"           # "gemini" (free) ba "anthropic"
+gemini_text_models: ["gemini-flash-latest", "gemini-2.5-flash", "gemini-2.5-flash-lite"]
+anthropic_model: "claude-haiku-5-5"
+use_research: true               # Google Search diye real story/research khuje script e dey (originality)
+
+# ---------- Voice ----------
+# "gemini" = beshi human/natural (free daily limit ache), na hole nijei "edge" e chole jabe
+voice_engine: "gemini"
+gemini_voice: "Algenib"          # voice test chalie pochondo moto bodlan (guide dekhun)
+edge_voice: "en-US-ChristopherNeural"
+edge_rate: "-8%"
+edge_pitch: "-6Hz"
+
+# ---------- Length ----------
+long_words: [850, 1100]          # ~6-8 min
+short_words: [95, 135]           # ~40-55 sec
+
+# ---------- Look ----------
+letterbox_long: true             # cinema style kalo bar (long video)
+film_grain: 7                    # 0 = off
+music_volume: 0.16               # voice er niche music koto jore
+sfx: true                        # whoosh / boom / riser effects
+brand_watermark: true            # kone halka "STAY DRIVEN"
+caption_gold: "&H0035C8FF"       # highlight color (ASS BGR) = gold
+caption_red: "&H003030E8"        # impact accent = red
+
+# ---------- Thumbnail ----------
+# "auto" = Cloudflare AI key thakle AI background, na hole video theke best frame
+thumbnail_background: "auto"
+
+hashtags_youtube: ["#motivation", "#discipline", "#selfimprovement", "#mindset"]
+hashtags_meta: ["#motivation", "#discipline", "#mindset", "#selfimprovement", "#success",
+                "#motivationalquotes", "#hardwork", "#staydriven", "#growthmindset", "#focus"]
+
+# Topic pool (rotation e ashe; nijer moto add/remove korun)
+themes:
+  - discipline when motivation is gone
+  - the 5 AM mindset and owning your morning
+  - failure as data, not identity
+  - consistency and the compound effect of small wins
+  - mental toughness in the hardest season of life
+  - stop waiting for the perfect moment
+  - self-belief when nobody believes in you
+  - leaving the comfort zone
+  - deep focus in a world built to distract you
+  - building habits that survive bad days
+  - patience and playing the long game
+  - turning pain and rejection into fuel
+  - comparison and running your own race
+  - hard work beats talent when talent doesn't work hard
+  - starting over at zero
+  - working in silence and letting results talk
+  - fear, courage and acting anyway
+  - gratitude without losing your hunger
+  - becoming the person your future self needs
+  - no-excuses ownership of your life
+  - stoic calm under pressure
+  - dopamine, distraction and taking your mind back
+  - loneliness of the path to greatness
+  - proving your old self wrong
+  - the price of greatness nobody shows you
