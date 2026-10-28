@@ -92,29 +92,55 @@ def align_words(voice_wav, segs, total):
     for s in segs:
         bounds[s["part"]] = (s["part_start"], s["part_start"] + s["part_dur"])
 
-    k = 0
-    while k < n:
-        if times[k] is not None:
-            k += 1
-            continue
-        j = k
-        while j < n and times[j] is None and part_of[j] == part_of[k]:
-            j += 1
-        p_start, p_end = bounds[part_of[k]]
-        left = times[k - 1][1] if k > 0 and times[k - 1] is not None and part_of[k - 1] == part_of[k] \
-            else p_start
-        right = times[j][0] if j < n and times[j] is not None and part_of[j] == part_of[k] else p_end
-        lens = [len(script[m][1]) + 1 for m in range(k, j)]
-        for m, t in zip(range(k, j), _spread_on_speech(mask, left, right, lens)):
-            times[m] = t
-        k = j
+    def fill(times):
+        k = 0
+        while k < n:
+            if times[k] is not None:
+                k += 1
+                continue
+            j = k
+            while j < n and times[j] is None and part_of[j] == part_of[k]:
+                j += 1
+            p_start, p_end = bounds[part_of[k]]
+            left = times[k - 1][1] if k > 0 and times[k - 1] is not None and part_of[k - 1] == part_of[k] \
+                else p_start
+            right = times[j][0] if j < n and times[j] is not None and part_of[j] == part_of[k] else p_end
+            lens = [len(script[m][1]) + 1 for m in range(k, j)]
+            for m, t in zip(range(k, j), _spread_on_speech(mask, left, right, lens)):
+                times[m] = t
+            k = j
 
-    last = 0.0
-    for m in range(n):
-        s, e = times[m]
-        s = max(s, last)
-        times[m] = (s, max(e, s + 0.08))
-        last = s
+        last = 0.0
+        for m in range(n):
+            s, e = times[m]
+            s = max(s, last)
+            times[m] = (s, max(e, s + 0.08))
+            last = s
+
+        return times
+
+    times = fill(times)
+
+    # SAFETY CHECK: a long stretch of speech with no caption word = timing went wrong
+    # (whisper mis-matched part of the script). Then redo everything from the voice itself.
+    def worst_gap(times):
+        starts = sorted(t[0] for t in times)
+        speech_idx = np.where(mask)[0]
+        if not len(speech_idx):
+            return 0.0
+        edges = [speech_idx[0] / 100.0] + starts + [speech_idx[-1] / 100.0]
+        worst = 0.0
+        for a_, b_ in zip(edges, edges[1:]):
+            ia, ib = int(max(0, a_) * 100), int(max(0, b_) * 100)
+            worst = max(worst, mask[ia:ib].sum() / 100.0 if ib > ia else 0.0)
+        return worst
+
+    gap = worst_gap(times)
+    if heard and gap > 2.5:
+        log(f"align: {gap:.1f}s of speech had no caption word: whisper timing rejected, using speech-activity timing")
+        times = fill([None] * n)
+        gap = worst_gap(times)
+    log(f"align: longest speech without a caption change {gap:.1f}s")
 
     # quality check: how many caption words start while the voice is silent?
     off = sum(1 for s, _ in times if 0 <= int(s * 100) < len(mask) and

@@ -3,6 +3,8 @@ import os
 import random
 import time
 
+import re
+
 import requests
 
 from .util import log
@@ -11,6 +13,17 @@ FALLBACK = ["silhouette man sunrise", "athlete training slow motion", "boxer tra
             "storm clouds timelapse", "ocean waves crashing slow motion", "man walking alone road",
             "city lights night aerial", "mountain summit hiker", "rain on window night",
             "runner stairs sunrise", "fire burning slow motion", "lone tree field fog"]
+
+
+# off-brand or fake-looking (CGI / religion / fantasy / horror) footage is skipped
+BLOCK = re.compile(r"\b(cross|crucifix|church|jesus|christ|god|bible|pray|prayer|religio\w*|islam|mosque|temple|"
+                   r"buddha|demon|devil|satan|monster|skull|zombie|halloween|horror|ghost|dragon|fantasy|"
+                   r"magic|alien|3d|cgi|render\w*|animation|animated|cartoon|ai|generated|abstract|"
+                   r"loop|motion graphics?|background|particles?|hologram|neon sign|text|logo|flag)\b", re.I)
+
+
+def _blocked(text):
+    return bool(BLOCK.search(str(text or "").replace("-", " ")))
 
 
 class Footage:
@@ -40,6 +53,8 @@ class Footage:
         out = []
         for v in r.json().get("videos", []):
             files = [f for f in v.get("video_files", []) if f.get("file_type") == "video/mp4" and f.get("width")]
+            if _blocked(v.get("url", "")):
+                continue
             out.append({"id": f"px:{v['id']}", "duration": v.get("duration", 0),
                         "creator": f"px:{(v.get('user') or {}).get('id')}",
                         "files": [{"url": f["link"], "w": f["width"], "h": f["height"]} for f in files]})
@@ -50,13 +65,16 @@ class Footage:
             return []
         try:
             r = requests.get("https://pixabay.com/api/videos/", timeout=30,
-                             params={"key": self.pixabay, "q": q[:100], "per_page": 50, "safesearch": "true"})
+                             params={"key": self.pixabay, "q": q[:100], "per_page": 50, "safesearch": "true",
+                                     "video_type": "film"})
             r.raise_for_status()
         except requests.RequestException as e:
             log(f"pixabay '{q}': {e}")
             return []
         out = []
         for h in r.json().get("hits", []):
+            if _blocked(h.get("tags", "")):
+                continue
             files = [{"url": f["url"], "w": f["width"], "h": f["height"]}
                      for f in h.get("videos", {}).values() if f.get("url") and f.get("width")]
             out.append({"id": f"pb:{h['id']}", "duration": h.get("duration", 0), "files": files,

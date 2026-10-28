@@ -69,6 +69,18 @@ def plan_shots(kind, segs, impacts, look="cinematic"):
         fixed[i]["dur"] = fixed[i + 1]["start"] - fixed[i]["start"]
     if fixed and segs:
         fixed[-1]["dur"] = max(0.5, segs[-1]["start"] + segs[-1]["dur"] - fixed[-1]["start"])
+    # never let one clip sit on screen too long (was 19 s once): split long shots
+    max_len = 7.0 if look == "documentary" else (6.0 if kind == "long" else 3.2)
+    split = []
+    for sh in fixed:
+        if sh.get("card") or sh["dur"] <= max_len:
+            split.append(sh)
+            continue
+        n = math.ceil(sh["dur"] / ((lo + hi) / 2))
+        part = sh["dur"] / n
+        for k in range(n):
+            split.append(dict(sh, start=sh["start"] + k * part, dur=part, impact=sh.get("impact") and k == 0))
+    fixed = split
     bad = [sh for sh in fixed if sh["dur"] < 0.3]
     if bad:
         log(f"shot plan: fixed {len(bad)} too-short shots")
