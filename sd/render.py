@@ -54,16 +54,38 @@ def plan_shots(kind, segs, impacts, look="cinematic"):
             q = s["visual"] if k % 2 == 0 else s.get("visual2") or s["visual"]
             shots.append({"start": a, "dur": b - a, "query": q,
                           "impact": any(abs(a - x) < 0.05 for x in forced)})
+    shots.sort(key=lambda x: x["start"])
     # merge tiny leftovers into the previous shot
     fixed = []
     for sh in shots:
+        if fixed and sh["start"] < fixed[-1]["start"] + 0.35:
+            continue                       # overlapping shot (segments overlapped): skip it
         if fixed and sh["dur"] < 0.6 and not sh.get("card"):
             fixed[-1]["dur"] += sh["dur"]
         else:
             fixed.append(sh)
-    # make shots perfectly contiguous
+    # make shots perfectly contiguous, last one runs to the end of the voice
     for i in range(len(fixed) - 1):
         fixed[i]["dur"] = fixed[i + 1]["start"] - fixed[i]["start"]
+    if fixed and segs:
+        fixed[-1]["dur"] = max(0.5, segs[-1]["start"] + segs[-1]["dur"] - fixed[-1]["start"])
+    # never let one clip sit on screen too long (was 19 s once): split long shots
+    max_len = 7.0 if look == "documentary" else (6.0 if kind == "long" else 3.2)
+    split = []
+    for sh in fixed:
+        if sh.get("card") or sh["dur"] <= max_len:
+            split.append(sh)
+            continue
+        n = math.ceil(sh["dur"] / ((lo + hi) / 2))
+        part = sh["dur"] / n
+        for k in range(n):
+            split.append(dict(sh, start=sh["start"] + k * part, dur=part, impact=sh.get("impact") and k == 0))
+    fixed = split
+    bad = [sh for sh in fixed if sh["dur"] < 0.3]
+    if bad:
+        log(f"shot plan: fixed {len(bad)} too-short shots")
+    for sh in fixed:
+        sh["dur"] = max(0.3, sh["dur"])
     return fixed
 
 
@@ -81,6 +103,9 @@ def _shot_filter(kind, sh, W, H, dur, look="cinematic"):
           f"fps=30,setsar=1,{DOC_GRADE if look == 'documentary' else GRADE}")
     if sh.get("card"):
         vf += ",gblur=sigma=22,eq=brightness=-0.12"
+    # stock sites round clip lengths up: if this clip runs out early, hold its last frame
+    # for the few missing frames so every shot is EXACTLY its planned length
+    vf += f",tpad=stop_mode=clone:stop_duration={dur + 0.5:.3f}"
     return vf + ",format=yuv420p"
 
 
@@ -114,6 +139,11 @@ def build_footage(kind, shots, picker, work: Path, look="cinematic"):
     (work / "shots.txt").write_text("".join(f"file '{f.name}'\n" for f in files))
     run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", "shots.txt",
          "-c", "copy", "footage.mp4"], cwd=work)
+    want = sum(sh["dur"] for sh in shots)
+    got = ffprobe_duration(work / "footage.mp4")
+    log(f"{kind}: footage {got:.1f}s for {want:.1f}s of voice")
+    if got < want - 0.5:
+        raise RuntimeError(f"footage too short ({got:.1f}s of {want:.1f}s)")
     return work / "footage.mp4"
 
 
