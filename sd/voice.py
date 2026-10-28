@@ -156,8 +156,9 @@ def _even(text, start, dur):
 def _concat(wavs, out):
     lst = out.parent / (out.stem + "_list.txt")
     lst.write_text("".join(f"file '{Path(w).name}'\n" for w in wavs))
+    # re-encode (no stream copy): exact sample count, so timing in the file = timing we computed
     run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", lst.name,
-         "-c", "copy", out.name], cwd=out.parent)
+         "-ar", "48000", "-ac", "1", "-c:a", "pcm_s16le", out.name], cwd=out.parent)
 
 
 # ---------------- main ----------------
@@ -307,15 +308,8 @@ def _synth_per_segment(parts, cfg, work, engine):
             wav = work / f"seg_{n:03d}.wav"
             _wav48(raw, wav, pad_after=gap)
             dur = ffprobe_duration(wav)
-            # Edge offsets are relative to the raw file; silenceremove trims ~0-50 ms -> close enough
-            lead = 0.0
-            if words:
-                lead = max(0.0, words[0]["start"] - 0.05)
-                ws = [{"start": cursor + w["start"] - lead, "end": cursor + w["end"] - lead, "word": w["word"]}
-                      for w in words]
-            else:
-                ws = _even(s["text"], cursor + 0.05, max(0.5, dur - gap - 0.1))
-            segs.append(dict(s, part=pi, start=cursor, dur=dur, words=ws))
+            # every sentence is its own recording: its start is exact; words are placed from the audio
+            segs.append(dict(s, part=n, part_start=cursor, part_dur=dur, start=cursor, dur=dur, words=[]))
             wavs.append(wav)
             cursor += dur
             n += 1
@@ -323,6 +317,8 @@ def _synth_per_segment(parts, cfg, work, engine):
     _concat(wavs, voice)
     total = ffprobe_duration(voice)
     log(f"voice ({engine}) {total:.1f}s, {n} segments")
+    from .align import align_words
+    align_words(voice, segs, total)
     return voice, total, segs
 
 
