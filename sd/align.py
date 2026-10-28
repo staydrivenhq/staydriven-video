@@ -1,7 +1,13 @@
-"""Gemini voice word-timing dey na -> faster-whisper diye shuney protiti shobder shomoy ber kori,
-tarpor script er shobder sathe mil kori (caption ekdom voice er sathe sync)."""
+"""Caption timing: protiti shobdo voice er thik kokhon bola hocche.
+
+1) faster-whisper voice shune shobdo + shomoy ber kore, script er shobder sathe mil kora hoy.
+2) Ja mile na (ba whisper na chole), segulo shudhu voice er KOTHA-BOLAR jaygay (nirob jayga bad diye)
+   shobder length onujayi boshano hoy. Tai caption kokhono nirobotar shomoy egiye jay na.
+"""
 import difflib
 import re
+
+import numpy as np
 
 from .util import log
 
@@ -10,25 +16,56 @@ def _norm(w):
     return re.sub(r"[^a-z0-9']", "", w.lower().replace("’", "'"))
 
 
-def align_words(voice_wav, segs, total):
-    script = []                       # (seg_index, original_word)
-    for i, s in enumerate(segs):
-        for w in s["text"].split():
-            script.append((i, w))
+def _speech_mask(voice_wav):
+    """10 ms frame er True/False: ekhane kotha hocche kina."""
+    from .voice import _read_mono, pauses
+    a = _read_mono(voice_wav)
+    n = len(a) // 480
+    mask = np.ones(n, dtype=bool)
+    for s, e in pauses(a, thresh_db=-40.0, min_len=0.12):
+        mask[int(s * 100):int(e * 100)] = False
+    return mask
+
+
+def _spread_on_speech(mask, left, right, lens):
+    """lens (char length) onujayi shobd gulo [left, right] er moddhe shudhu kotha-bolar frame e boshay."""
+    a, b = int(left * 100), max(int(left * 100) + 1, int(right * 100))
+    idx = np.arange(a, min(b, len(mask)))
+    voiced = idx[mask[idx]] if len(idx) else idx
+    if len(voiced) < len(lens):            # almost no speech found: plain spread
+        voiced = idx if len(idx) else np.array([a])
+    cum = np.cumsum([0] + lens) / max(1, sum(lens))
+    out = []
+    for k in range(len(lens)):
+        i0 = voiced[min(len(voiced) - 1, int(cum[k] * len(voiced)))]
+        i1 = voiced[min(len(voiced) - 1, max(int(cum[k + 1] * len(voiced)) - 1, 0))]
+        out.append((i0 / 100.0, max(i1 / 100.0 + 0.01, i0 / 100.0 + 0.08)))
+    return out
+
+
+def _whisper(voice_wav):
     heard = []
     try:
         from faster_whisper import WhisperModel
         model = WhisperModel("base.en", device="cpu", compute_type="int8")
         result, _ = model.transcribe(str(voice_wav), word_timestamps=True, beam_size=1,
-                                     condition_on_previous_text=False, vad_filter=False)
+                                     condition_on_previous_text=False, vad_filter=True,
+                                     vad_parameters={"min_silence_duration_ms": 300})
         for seg in result:
             for w in seg.words or []:
                 heard.append((w.start, w.end, w.word.strip()))
-        log(f"align: whisper heard {len(heard)} words, script has {len(script)}")
     except Exception as e:
-        log(f"align: whisper unavailable ({e}), spreading words by part length")
+        log(f"align: whisper not available ({str(e)[:160]})")
+    return heard
 
-    times = [None] * len(script)
+
+def align_words(voice_wav, segs, total):
+    script = [(i, w) for i, s in enumerate(segs) for w in s["text"].split()]
+    n = len(script)
+    mask = _speech_mask(voice_wav)
+    heard = _whisper(voice_wav)
+
+    times = [None] * n
     if heard:
         a = [_norm(w) for _, w in script]
         b = [_norm(w) for _, _, w in heard]
@@ -38,52 +75,51 @@ def align_words(voice_wav, segs, total):
                 hs, he, _ = heard[blk.b + k]
                 times[blk.a + k] = (hs, he)
         matched = sum(t is not None for t in times)
-        log(f"align: matched {matched}/{len(script)} words")
+        log(f"align: whisper matched {matched}/{n} words")
+        if matched < n * 0.5:
+            log("align: whisper match too low, using speech-activity timing only")
+            times = [None] * n
+    else:
+        log("align: using speech-activity timing")
 
-    # anchors for each voice part boundary so unmatched words stay inside their part
-    parts = {}
-    for i, s in enumerate(segs):
-        p = parts.setdefault(s["part"], [s["part_start"], s["part_start"] + s["part_dur"], []])
-        p[2].append(i)
+    # part boundaries keep unmatched words inside their own voice part
+    part_of = [segs[i]["part"] for i, _ in script]
+    bounds = {}
+    for s in segs:
+        bounds[s["part"]] = (s["part_start"], s["part_start"] + s["part_dur"])
 
-    # fill gaps by interpolation (by character length) between known neighbours
-    n = len(script)
-    idx = 0
-    while idx < n:
-        if times[idx] is not None:
-            idx += 1
+    k = 0
+    while k < n:
+        if times[k] is not None:
+            k += 1
             continue
-        j = idx
-        while j < n and times[j] is None:
+        j = k
+        while j < n and times[j] is None and part_of[j] == part_of[k]:
             j += 1
-        seg_part = segs[script[idx][0]]["part"]
-        p_start, p_end, _ = parts[seg_part]
-        left = times[idx - 1][1] if idx > 0 and times[idx - 1] is not None and \
-            segs[script[idx - 1][0]]["part"] == seg_part else p_start + 0.05
-        right = times[j][0] if j < n and segs[script[j][0]]["part"] == seg_part else p_end - 0.45
-        right = max(right, left + 0.2 * (j - idx))
-        lens = [len(script[k][1]) + 2 for k in range(idx, j)]
-        tot = sum(lens)
-        t = left
-        for k, L in zip(range(idx, j), lens):
-            d = (right - left) * L / tot
-            times[k] = (t, t + d * 0.9)
-            t += d
-        idx = j
+        p_start, p_end = bounds[part_of[k]]
+        left = times[k - 1][1] if k > 0 and times[k - 1] is not None and part_of[k - 1] == part_of[k] \
+            else p_start
+        right = times[j][0] if j < n and times[j] is not None and part_of[j] == part_of[k] else p_end
+        lens = [len(script[m][1]) + 1 for m in range(k, j)]
+        for m, t in zip(range(k, j), _spread_on_speech(mask, left, right, lens)):
+            times[m] = t
+        k = j
 
-    # monotonic clean-up
     last = 0.0
-    for k in range(n):
-        s, e = times[k]
+    for m in range(n):
+        s, e = times[m]
         s = max(s, last)
-        e = max(e, s + 0.08)
-        times[k] = (s, e)
+        times[m] = (s, max(e, s + 0.08))
         last = s
 
+    # quality check: how many caption words start while the voice is silent?
+    off = sum(1 for s, _ in times if 0 <= int(s * 100) < len(mask) and
+              not mask[max(0, int(s * 100) - 15):int(s * 100) + 16].any())
+    log(f"align: {n - off}/{n} caption words start on spoken audio")
+
     for i, s in enumerate(segs):
-        s["words"] = [{"start": times[k][0], "end": times[k][1], "word": script[k][1]}
-                      for k in range(n) if script[k][0] == i]
-    # segment boundaries: from first word (minus lead-in) to next segment's start
+        s["words"] = [{"start": times[m][0], "end": times[m][1], "word": script[m][1]}
+                      for m in range(n) if script[m][0] == i]
     for i, s in enumerate(segs):
         st = s["words"][0]["start"] - 0.08 if s["words"] else s["part_start"]
         if i == 0:

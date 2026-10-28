@@ -177,15 +177,103 @@ def synthesize(parts, cfg, work: Path):
     return _synth_per_segment(parts, cfg, work, engine)
 
 
+def _read_mono(path):
+    p = subprocess.run(["ffmpeg", "-v", "error", "-i", str(path), "-f", "f32le", "-ac", "1", "-ar", "48000", "-"],
+                       capture_output=True)
+    return np.frombuffer(p.stdout, dtype="<f4").astype(np.float32)
+
+
+def _write_mono(path, a):
+    a = np.clip(a, -1, 1)
+    with wave.open(str(path), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(48000)
+        w.writeframes((a * 32767).astype("<i2").tobytes())
+
+
+def pauses(a, sr=48000, thresh_db=-42.0, min_len=0.12):
+    """Nirob jayga gulo: [(start_sec, end_sec), ...] (10 ms frame)."""
+    hop = int(sr * 0.01)
+    n = len(a) // hop
+    if n == 0:
+        return []
+    rms = np.sqrt(np.mean(a[: n * hop].reshape(n, hop) ** 2, axis=1) + 1e-12)
+    db = 20 * np.log10(rms)
+    quiet = db < thresh_db
+    out, i = [], 0
+    while i < n:
+        if quiet[i]:
+            j = i
+            while j < n and quiet[j]:
+                j += 1
+            if (j - i) * 0.01 >= min_len:
+                out.append((i * 0.01, j * 0.01))
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def squeeze_pauses(path, max_pause=0.55, keep=0.40):
+    """Gemini voice majhe majhe lomba nirobota dhokay (2-6 s). Oigulo choto kore dey.
+    Returns (longest pause before fixing, seconds removed)."""
+    a = _read_mono(path)
+    sr = 48000
+    ps = [(s, e) for s, e in pauses(a) if s > 0.05 and e < len(a) / sr - 0.05]
+    longest = max([e - s for s, e in ps], default=0.0)
+    keep_parts, last, removed = [], 0, 0.0
+    for s, e in ps:
+        if e - s <= max_pause:
+            continue
+        cut_a = int((s + keep / 2) * sr)
+        cut_b = int((e - keep / 2) * sr)
+        fade = int(0.01 * sr)
+        seg = a[last:cut_a].copy()
+        if len(seg) > fade:
+            seg[-fade:] *= np.linspace(1, 0, fade)
+        keep_parts.append(seg)
+        removed += (cut_b - cut_a) / sr
+        last = cut_b
+    tail = a[last:].copy()
+    fade = int(0.01 * sr)
+    if removed and len(tail) > fade:
+        tail[:fade] *= np.linspace(0, 1, fade)
+    keep_parts.append(tail)
+    out = np.concatenate(keep_parts)
+    # trailing dead air (Gemini sometimes adds seconds of silence at the end)
+    loud = np.where(np.abs(out) > 10 ** (-42 / 20))[0]
+    if len(loud):
+        end = min(len(out), loud[-1] + int(0.15 * sr))
+        removed += (len(out) - end) / sr
+        out = out[:end]
+    _write_mono(path, out)
+    return longest, removed
+
+
 def _synth_gemini(parts, cfg, work):
     from .align import align_words
     wavs, segs, cursor = [], [], 0.0
     for pi, part in enumerate(parts):
         raw = work / f"part_{pi:02d}_raw.wav"
         text = " ".join(s["text"] for s in part)
-        model = gemini_tts(text, cfg["gemini_voice"], raw)
+        words = len(text.split())
         wav = work / f"part_{pi:02d}.wav"
-        _wav48(raw, wav, pad_after=PART_GAP)
+        for attempt in range(3):
+            model = gemini_tts(text, cfg["gemini_voice"], raw)
+            _wav48(raw, wav, pad_after=0.0)
+            longest, removed = squeeze_pauses(wav)
+            speech = ffprobe_duration(wav)
+            # ~2.0-3.3 words/sec is normal. Far shorter = text was cut off; retry.
+            if speech >= words / 4.2 or attempt == 2:
+                break
+            log(f"voice part {pi + 1}: only {speech:.1f}s for {words} words (cut off?), retrying")
+        if removed:
+            log(f"voice part {pi + 1}: removed {removed:.1f}s of dead air (longest pause was {longest:.1f}s)")
+        padded = work / f"part_{pi:02d}_p.wav"
+        run(["ffmpeg", "-y", "-loglevel", "error", "-i", str(wav), "-af", f"apad=pad_dur={PART_GAP}",
+             "-ar", "48000", "-ac", "1", str(padded)])
+        wav = padded
         dur = ffprobe_duration(wav)
         log(f"voice part {pi + 1}/{len(parts)} {dur:.1f}s ({model})")
         for s in part:

@@ -20,6 +20,7 @@ class Footage:
         self.cache = {}
         self.pexels = os.environ.get("PEXELS_API_KEY")
         self.pixabay = os.environ.get("PIXABAY_API_KEY")
+        self.recent_creators = []        # same photographer = same location; avoid back-to-back
 
     # ---- search ----
     def _pexels(self, q):
@@ -40,6 +41,7 @@ class Footage:
         for v in r.json().get("videos", []):
             files = [f for f in v.get("video_files", []) if f.get("file_type") == "video/mp4" and f.get("width")]
             out.append({"id": f"px:{v['id']}", "duration": v.get("duration", 0),
+                        "creator": f"px:{(v.get('user') or {}).get('id')}",
                         "files": [{"url": f["link"], "w": f["width"], "h": f["height"]} for f in files]})
         return out
 
@@ -57,7 +59,8 @@ class Footage:
         for h in r.json().get("hits", []):
             files = [{"url": f["url"], "w": f["width"], "h": f["height"]}
                      for f in h.get("videos", {}).values() if f.get("url") and f.get("width")]
-            out.append({"id": f"pb:{h['id']}", "duration": h.get("duration", 0), "files": files})
+            out.append({"id": f"pb:{h['id']}", "duration": h.get("duration", 0), "files": files,
+                        "creator": f"pb:{h.get('user_id')}"})
         return out
 
     def _search(self, q):
@@ -82,13 +85,17 @@ class Footage:
     def pick(self, query, need, W, H):
         queries = [query, query + " cinematic", " ".join(query.split()[:2])] + random.sample(FALLBACK, 4)
         for reuse in (False, True):
-            for q in queries:
-                for v in self._search(q):
-                    if v["duration"] < need + 0.4 or (v["id"] in self.used and not reuse):
-                        continue
-                    f = self._file(v, W, H)
-                    if not f:
-                        continue
-                    self.used.add(v["id"])
-                    return {"id": v["id"], "url": f["url"], "duration": v["duration"], "query": q}
+            for strict in (True, False):
+                for q in queries:
+                    for v in self._search(q):
+                        if v["duration"] < need + 0.4 or (v["id"] in self.used and not reuse):
+                            continue
+                        if strict and v.get("creator") in self.recent_creators:
+                            continue
+                        f = self._file(v, W, H)
+                        if not f:
+                            continue
+                        self.used.add(v["id"])
+                        self.recent_creators = (self.recent_creators + [v.get("creator")])[-3:]
+                        return {"id": v["id"], "url": f["url"], "duration": v["duration"], "query": q}
         raise RuntimeError("no footage for " + query)

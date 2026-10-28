@@ -90,7 +90,9 @@ def build(kind, segs, total, cfg, out_path, hook_text=None, letterbox=False):
     impacts = []      # times (for footage cuts)
 
     # ---------- brand bug ----------
-    if cfg.get("brand_watermark", True):
+    from .util import ROOT
+    has_logo = (ROOT / "assets" / "logo.png").exists()
+    if cfg.get("brand_watermark", True) and not has_logo:
         y = 34 if (kind == "long" and letterbox) else (60 if kind == "long" else 150)
         x = W - 48 if kind == "long" else W - 56
         ev.append(_ev(9, 0, total + 1, "Brand",
@@ -136,8 +138,20 @@ def build(kind, segs, total, cfg, out_path, hook_text=None, letterbox=False):
                           f"\\t(520,{max(600, d_ms)},\\fscx104\\fscy104)\\fad(0,260)}}{head}"))
             sfx.append(("riser", st))
             sfx.append(("boom", st + 0.12))
-            sfx.append(("whoosh", en))
             continue
+
+        # ---------- documentary lower third (place / year / source from research) ----------
+        lt = esc(s.get("lower_third") or "").upper()
+        if lt:
+            lt_en = min(en, st + 3.6)
+            x0 = 120 if kind == "long" else 70
+            y0 = (H - 300) if kind == "long" else 330
+            ev.append(_ev(5, st + 0.2, lt_en, "Box",
+                          f"{{\\an7\\pos({x0},{y0})\\bord0\\shad0\\p1\\1c{gold}\\fscy0\\t(0,200,\\fscy100)"
+                          f"\\fad(0,250)}}m 0 0 l 8 0 8 64 0 64{{\\p0}}"))
+            ev.append(_ev(5, st + 0.35, lt_en, "Label",
+                          f"{{\\an4\\pos({x0 + 28},{y0 + 32})\\fsp14\\c&HFFFFFF&\\alpha&HFF&"
+                          f"\\t(0,350,\\alpha&H00&\\fsp6)\\fad(0,250)}}{lt}"))
 
         # ---------- spoken captions ----------
         imp = _norm(s.get("impact") or "")
@@ -153,7 +167,7 @@ def build(kind, segs, total, cfg, out_path, hook_text=None, letterbox=False):
             # impact slam
             if g[0].get("impact"):
                 word = esc(g[0]["word"]).upper().strip(".,!?;:")
-                hold_en = max(g_en, g_st + 0.75)
+                hold_en = min(max(g_en, g_st + 0.75), g_st + 1.3)
                 y = H // 2 - (20 if kind == "long" else 40)
                 shakes = [(0.00, 14, -10, 150), (0.04, -12, 8, 128), (0.08, 7, -4, 112), (0.12, -3, 2, 104)]
                 for k, (off, dx, dy, sc) in enumerate(shakes):
@@ -185,15 +199,16 @@ def build(kind, segs, total, cfg, out_path, hook_text=None, letterbox=False):
                 if b - a < 0.02:
                     continue
                 if kind == "short":
-                    # build the line word by word, newest word pops in gold
+                    # whole phrase on screen, the spoken word pops in gold
                     shown = []
-                    for k in range(wi + 1):
+                    for k in range(len(words)):
                         if k == wi:
-                            shown.append(f"{{\\c{gold}\\fscx122\\fscy122\\t(0,110,\\fscx100\\fscy100)}}"
-                                         f"{words[k]}{{\\c&HFFFFFF&}}")
+                            shown.append(f"{{\\c{gold}\\fscx118\\fscy118\\t(0,120,\\fscx106\\fscy106)}}"
+                                         f"{words[k]}{{\\c&HFFFFFF&\\fscx100\\fscy100}}")
                         else:
                             shown.append(words[k])
-                    text = f"{{\\an5\\pos({cx},{y})}}" + " ".join(shown)
+                    pop = "\\fscx90\\fscy90\\t(0,110,\\fscx100\\fscy100)" if wi == 0 else ""
+                    text = f"{{\\an5\\pos({cx},{y}){pop}}}" + " ".join(shown)
                 else:
                     shown = [(f"{{\\c{gold}}}{t}{{\\c&HFFFFFF&}}" if k == wi else t) for k, t in enumerate(words)]
                     pop = "\\fscx92\\fscy92\\t(0,120,\\fscx100\\fscy100)\\fad(70,0)" if wi == 0 else ""
@@ -208,10 +223,11 @@ def build(kind, segs, total, cfg, out_path, hook_text=None, letterbox=False):
         st = max(0, total - 4.2)
         ev.append(_ev(1, st, total + 1, "Box", _rect(P, "&H000000&", "&H50&").replace(
             "\\alpha&H50&", "\\alpha&HFF&\\t(0,600,\\alpha&H50&)")))
-        ev.append(_ev(6, st + 0.3, total + 1, "Head",
-                      f"{{\\an5\\pos({cx},{H // 2 - 30})\\alpha&HFF&\\t(0,500,\\alpha&H00&)}}STAY {{\\c{gold}}}DRIVEN"))
+        if not has_logo:
+            ev.append(_ev(6, st + 0.3, total + 1, "Head",
+                          f"{{\\an5\\pos({cx},{H // 2 - 30})\\alpha&HFF&\\t(0,500,\\alpha&H00&)}}STAY {{\\c{gold}}}DRIVEN"))
         ev.append(_ev(6, st + 0.8, total + 1, "Label",
-                      f"{{\\an5\\pos({cx},{H // 2 + 80})\\alpha&HFF&\\t(0,400,\\alpha&H00&)}}NEW VIDEO EVERY DAY"))
+                      f"{{\\an5\\pos({cx},{H // 2 + 150})\\alpha&HFF&\\t(0,400,\\alpha&H00&)}}NEW VIDEO EVERY DAY"))
 
     out_path.write_text(header(P, cfg) + "\n".join(e for e in ev if e) + "\n", encoding="utf-8")
     return sfx, impacts

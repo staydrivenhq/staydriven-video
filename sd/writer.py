@@ -49,8 +49,12 @@ silhouettes, slow motion, athletes training, boxer, sprinter, rain on window, st
 ocean waves crashing, empty road at dawn, city lights at night, man walking alone, hands writing journal,
 chess pieces, clock ticking, fire, waterfall. Match the line's emotion. No brands, no famous people, no text.
 Do not repeat the exact same search more than twice.
+"visual2": a DIFFERENT 2-5 word search for the same moment (another subject or angle), so long lines
+don't sit on one clip.
 "impact": ONE word copied exactly from that segment's text that should hit hardest on screen (or "").
 Use impact on about one third of segments only.
+"lower_third": documentary label like "OHIO, 1998" or "STANFORD STUDY, 1972" ONLY when the line
+mentions a real place/year/study from the research notes; otherwise "". At most 4 per script.
 """
 
 
@@ -95,8 +99,9 @@ def _fix_segments(segs):
         imp = str(s.get("impact") or "").strip()
         if imp and imp.lower() not in text.lower():
             imp = ""
-        out.append({"text": text, "visual": str(s.get("visual") or "cinematic silhouette sunrise"),
-                    "impact": imp})
+        vis = str(s.get("visual") or "cinematic silhouette sunrise")
+        out.append({"text": text, "visual": vis, "visual2": str(s.get("visual2") or vis),
+                    "impact": imp, "lower_third": _clean_text(s.get("lower_third") or "")[:40]})
     return out
 
 
@@ -141,9 +146,9 @@ METADATA:
 Return ONLY JSON:
 {{"title": "", "thumbnail_text": "", "thumbnail_scene": "", "description": "", "tags": [],
   "comment": "",
-  "hook": [{{"text": "", "visual": "", "impact": ""}}],
-  "points": [{{"label": "", "heading": "3-6 words", "segments": [{{"text": "", "visual": "", "impact": ""}}]}}],
-  "close": [{{"text": "", "visual": "", "impact": ""}}]}}
+  "hook": [{{"text": "", "visual": "", "visual2": "", "impact": "", "lower_third": ""}}],
+  "points": [{{"label": "", "heading": "3-6 words", "segments": [{{"text": "", "visual": "", "visual2": "", "impact": "", "lower_third": ""}}]}}],
+  "close": [{{"text": "", "visual": "", "visual2": "", "impact": "", "lower_third": ""}}]}}
 """
     for attempt in range(4):
         try:
@@ -196,7 +201,7 @@ SHORT RULES:
 
 Return ONLY JSON:
 {{"title": "", "hook_text": "", "caption": "", "comment": "", "tags": [],
-  "segments": [{{"text": "", "visual": "", "impact": ""}}]}}
+  "segments": [{{"text": "", "visual": "", "visual2": "", "impact": "", "lower_third": ""}}]}}
 """
     for attempt in range(4):
         try:

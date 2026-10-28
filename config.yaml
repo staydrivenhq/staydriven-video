@@ -38,10 +38,11 @@ short_words: [95, 135]           # ~40-55 sec
 
 # ---------- Look ----------
 letterbox_long: true             # cinema style kalo bar (long video)
+long_look: "documentary"         # long video: "documentary" (film look, dhire cut, place/year label) ba "cinematic"
 film_grain: 7                    # 0 = off
 music_volume: 0.16               # voice er niche music koto jore
-sfx: true                        # whoosh / boom / riser effects
-brand_watermark: true            # kone halka "STAY DRIVEN"
+sfx: true                        # impact boom + card riser (page-flip moto whoosh bad deya hoyeche)
+brand_watermark: true            # assets/logo.png kone (+ long video r sheshe boro logo)
 caption_gold: "&H0035C8FF"       # highlight color (ASS BGR) = gold
 caption_red: "&H003030E8"        # impact accent = red
 
