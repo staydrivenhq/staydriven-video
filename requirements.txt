@@ -4,4 +4,3 @@ numpy>=1.26
 scipy>=1.11
 pillow>=10.0
 edge-tts>=7.0.0
-faster-whisper>=1.0.0

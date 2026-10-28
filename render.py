@@ -103,6 +103,9 @@ def _shot_filter(kind, sh, W, H, dur, look="cinematic"):
           f"fps=30,setsar=1,{DOC_GRADE if look == 'documentary' else GRADE}")
     if sh.get("card"):
         vf += ",gblur=sigma=22,eq=brightness=-0.12"
+    # stock sites round clip lengths up: if this clip runs out early, hold its last frame
+    # for the few missing frames so every shot is EXACTLY its planned length
+    vf += f",tpad=stop_mode=clone:stop_duration={dur + 0.5:.3f}"
     return vf + ",format=yuv420p"
 
 
@@ -136,6 +139,11 @@ def build_footage(kind, shots, picker, work: Path, look="cinematic"):
     (work / "shots.txt").write_text("".join(f"file '{f.name}'\n" for f in files))
     run(["ffmpeg", "-y", "-loglevel", "error", "-f", "concat", "-safe", "0", "-i", "shots.txt",
          "-c", "copy", "footage.mp4"], cwd=work)
+    want = sum(sh["dur"] for sh in shots)
+    got = ffprobe_duration(work / "footage.mp4")
+    log(f"{kind}: footage {got:.1f}s for {want:.1f}s of voice")
+    if got < want - 0.5:
+        raise RuntimeError(f"footage too short ({got:.1f}s of {want:.1f}s)")
     return work / "footage.mp4"
 
 

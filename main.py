@@ -71,10 +71,27 @@ def run_kind(kind, cfg, hist, dry):
     parts = writer.to_timeline_parts(kind, d)
     voice_wav, total, segs = voice.synthesize(parts, cfg, work)
 
+    # QUALITY GATE 1: captions must follow the voice the whole way
+    from sd import align
+    worst = align.check(segs, align.speech_mask(voice_wav), total)
+    if worst > 3.0:
+        raise RuntimeError(f"caption timing check failed ({worst:.1f}s of speech without captions)")
+
     used = set(hist["used_footage"])
-    picker = Footage("landscape" if kind == "long" else "portrait", used).pick
-    video, footage, shots = render.make_video(kind, segs, voice_wav, total, cfg, picker, work,
-                                              hook_text=d.get("hook_text"), seed=seed)
+    last_err = None
+    for attempt in range(2):                       # QUALITY GATE 2: render retried once
+        try:
+            picker = Footage("landscape" if kind == "long" else "portrait", used).pick
+            video, footage, shots = render.make_video(kind, segs, voice_wav, total, cfg, picker, work,
+                                                      hook_text=d.get("hook_text"), seed=seed)
+            break
+        except Exception as e:
+            last_err = e
+            log(f"render attempt {attempt + 1} failed: {str(e)[:300]}")
+            for f in work.glob("shot_*.mp4"):
+                f.unlink()
+    else:
+        raise RuntimeError(f"render failed twice: {last_err}")
     music_note = "Music: " + ("licensed track." if audio.user_tracks() else "original score.")
     thumb_path = None
     if kind == "long":
