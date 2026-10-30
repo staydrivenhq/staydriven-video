@@ -126,26 +126,50 @@ def run_kind(kind, cfg, hist, dry):
             from sd import publish_youtube
             rec["youtube"] = publish_youtube.upload(video, d["title"], desc, tags, cfg, thumb=thumb_path,
                                                     srt=work / "captions.srt", comment=d.get("comment"))
-        except Exception:
+        except Exception as e:
             traceback.print_exc()
-            errors.append(f"YouTube {kind}")
+            errors.append(f"YouTube {kind}: {str(e)[:300]}")
     if cfg.get("facebook"):
         try:
             from sd import publish_meta
             rec["facebook"] = (publish_meta.fb_video(video, d["title"], meta_text) if kind == "long"
                                else publish_meta.fb_reel(video, meta_text))
-        except Exception:
+        except Exception as e:
             traceback.print_exc()
-            errors.append(f"Facebook {kind}")
+            errors.append(f"Facebook {kind}: {str(e)[:300]}")
     if cfg.get("instagram") and kind == "short":
         try:
             from sd import publish_meta
             rec["instagram"] = publish_meta.ig_reel(video, meta_text, cfg.get("meta_ai_label", True))
-        except Exception:
+        except Exception as e:
             traceback.print_exc()
-            errors.append("Instagram short")
+            errors.append(f"Instagram short: {str(e)[:300]}")
     hist["posts"].append(rec)
+    write_summary(kind, d["title"], cfg, rec, errors)
     return errors
+
+
+def write_summary(kind, title, cfg, rec, errors):
+    """Run page e ekta chhoto table: kon platform e post holo, kon ta holo na ar keno."""
+    import os
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    rows = []
+    links = {"youtube": lambda v: f"https://youtu.be/{v}",
+             "facebook": lambda v: f"https://www.facebook.com/{v}",
+             "instagram": lambda v: "posted"}
+    for plat, name in (("youtube", "YouTube"), ("facebook", "Facebook"), ("instagram", "Instagram")):
+        if not cfg.get(plat) or (plat == "instagram" and kind != "short"):
+            continue
+        if rec.get(plat):
+            rows.append(f"| {name} | ✅ | {links[plat](rec[plat])} |")
+        else:
+            why = next((e.split(": ", 1)[-1] for e in errors if e.startswith(name)), "not posted")
+            rows.append(f"| {name} | ❌ | {why.replace('|', '/')} |")
+    text = f"## {kind.title()}: {title}\n\n| Platform | Status | Link / error |\n|---|---|---|\n" + "\n".join(rows) + "\n"
+    log("SUMMARY\n" + text)
+    if path:
+        with open(path, "a") as fh:
+            fh.write(text)
 
 
 def main():
