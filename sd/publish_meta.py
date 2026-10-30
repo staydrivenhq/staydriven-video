@@ -15,19 +15,45 @@ def _tok():
 
 
 # ---------------- Facebook ----------------
+def _fb_post(url, data, files=None, timeout=600, tries=5):
+    """POST with retries on network errors / 5xx. Returns the JSON or raises with Meta's message."""
+    last = ""
+    for attempt in range(tries):
+        try:
+            r = requests.post(url, data=data, files=files, timeout=timeout)
+            if r.ok:
+                return r.json()
+            last = f"HTTP {r.status_code}: {r.text[:400]}"
+            if r.status_code < 500 and '"is_transient":true' not in r.text:
+                break                                   # permission / bad request: retry won't help
+        except requests.RequestException as e:
+            last = str(e)[:300]
+        log(f"facebook retry {attempt + 1}: {last[:200]}")
+        time.sleep(10 * (attempt + 1))
+    raise RuntimeError(last)
+
+
 def fb_video(path, title, description):
+    """Long video -> Page video, uploaded in chunks (Meta's way for big files)."""
     page = os.environ["FB_PAGE_ID"]
-    for attempt in range(3):
-        with open(path, "rb") as fh:
-            r = requests.post(f"https://graph-video.facebook.com/{V}/{page}/videos", timeout=3600,
-                              data={"access_token": _tok(), "title": title[:250], "description": description},
-                              files={"source": (os.path.basename(path), fh, "video/mp4")})
-        if r.ok:
-            log(f"facebook: video posted {r.json().get('id')}")
-            return r.json().get("id")
-        log(f"facebook video attempt {attempt + 1}: {r.text[:300]}")
-        time.sleep(20)
-    raise RuntimeError("Facebook video failed: " + r.text[:300])
+    url = f"https://graph-video.facebook.com/{V}/{page}/videos"
+    size = os.path.getsize(path)
+    log(f"facebook: uploading long video ({size / 1e6:.0f} MB) in chunks")
+    s = _fb_post(url, {"access_token": _tok(), "upload_phase": "start", "file_size": str(size)}, timeout=120)
+    session, start, end = s["upload_session_id"], int(s["start_offset"]), int(s["end_offset"])
+    with open(path, "rb") as fh:
+        while start < end:
+            fh.seek(start)
+            chunk = fh.read(end - start)
+            t = _fb_post(url, {"access_token": _tok(), "upload_phase": "transfer",
+                               "upload_session_id": session, "start_offset": str(start)},
+                         files={"video_file_chunk": ("chunk", chunk, "application/octet-stream")}, timeout=900)
+            start, end = int(t["start_offset"]), int(t["end_offset"])
+    f = _fb_post(url, {"access_token": _tok(), "upload_phase": "finish", "upload_session_id": session,
+                       "title": title[:250], "description": description, "published": "true"}, timeout=300)
+    vid = s.get("video_id") or f.get("video_id")
+    log(f"facebook: long video posted {vid}")
+    return vid
 
 
 def fb_reel(path, description):
