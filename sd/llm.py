@@ -14,7 +14,7 @@ import requests
 
 GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 # Groq free tier (Llama chat models were retired for free users on 2026-08-16)
-GROQ_MODELS = ["openai/gpt-oss-120b", "qwen/qwen3.6-27b", "openai/gpt-oss-20b"]
+GROQ_MODELS = ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 CF_MODELS = ["@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/meta/llama-3.1-8b-instruct"]
 DEAD = set()          # models that said "daily quota used up" in this run: skip them
 
