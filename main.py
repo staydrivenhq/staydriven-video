@@ -7,6 +7,7 @@
 import argparse
 import datetime as dt
 import json
+import os
 import random
 import shutil
 import sys
@@ -103,7 +104,8 @@ def run_kind(kind, cfg, hist, dry):
     for f in list(work.glob("shot_*.mp4")) + list(work.glob("seg_*")) + list(work.glob("part_*")):
         f.unlink()
 
-    rec = {"date": day, "kind": kind, "theme": d["theme"], "format": d["format"], "title": d["title"]}
+    rec = {"date": day, "ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
+           "kind": kind, "theme": d["theme"], "format": d["format"], "title": d["title"]}
     hist["used_footage"] = list(used)
     (hist["long_formats"] if kind == "long" else hist["short_styles"]).append(d["format"])
     errors = []
@@ -172,11 +174,36 @@ def write_summary(kind, title, cfg, rec, errors):
             fh.write(text)
 
 
+def already_posted(hist, kind, hours=20):
+    """True if a real (published) video of this kind went out in the last `hours`."""
+    now = dt.datetime.now(dt.timezone.utc)
+    for p in reversed(hist["posts"]):
+        if p.get("kind") != kind or not (p.get("youtube") or p.get("facebook") or p.get("instagram")):
+            continue
+        if p.get("ts"):
+            when = dt.datetime.fromisoformat(p["ts"])
+        else:
+            when = dt.datetime.fromisoformat(p["date"] + "T12:00+00:00")
+        if (now - when).total_seconds() < hours * 3600:
+            return True
+    return False
+
+
+def summary_note(text):
+    path = os.environ.get("GITHUB_STEP_SUMMARY")
+    log(text)
+    if path:
+        with open(path, "a") as fh:
+            fh.write(text + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--kind", choices=["long", "short"], default="short")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--voice-test", action="store_true")
+    ap.add_argument("--attempt", type=int, default=0,
+                    help="1 = scheduled main run, 2 = scheduled backup run, 0 = by hand")
     a = ap.parse_args()
     cfg = yaml.safe_load((ROOT / "config.yaml").read_text())
     OUT.mkdir(exist_ok=True)
@@ -184,8 +211,20 @@ def main():
         voice.voice_test(cfg, OUT / "voice-test")
         return
     hist = load_history()
+    if a.attempt == 2 and already_posted(hist, a.kind):
+        summary_note(f"## Backup run: today's {a.kind} video was already posted, nothing to do ✅")
+        return
     try:
         errors = run_kind(a.kind, cfg, hist, a.dry_run)
+    except Exception as e:
+        save_history(hist)
+        if a.attempt == 1:
+            # AI / voice / footage service down: no failed e-mail yet, the backup run tries again later
+            traceback.print_exc()
+            summary_note(f"## {a.kind.title()}: could not be made this time\n\nReason: {str(e)[:300]}\n\n"
+                         f"Nothing was posted. The backup run will try again in about 3 hours.")
+            return
+        raise
     finally:
         save_history(hist)
     if errors:
