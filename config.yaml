@@ -23,7 +23,7 @@ llm_provider: "gemini"           # "gemini" (free) ba "anthropic"
 gemini_text_models: ["gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-flash-latest"]
 anthropic_model: "claude-haiku-5-5"
 # Gemini kaj na korle (free limit shesh / server busy) script likhbe Groq (GROQ_API_KEY), tarpor Cloudflare
-groq_models: ["openai/gpt-oss-120b", "qwen/qwen3.6-27b", "openai/gpt-oss-20b"]
+groq_models: ["openai/gpt-oss-120b", "openai/gpt-oss-20b"]
 use_research: true               # Google Search diye real story/research khuje script e dey (originality)
 
 # ---------- Voice ----------
