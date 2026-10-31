@@ -90,10 +90,51 @@ def _clean_text(t):
     return re.sub(r"\s+", " ", t).strip()
 
 
+def _get(d, *names, default=None):
+    """First key that exists (models sometimes rename keys: close/outro/ending...)."""
+    for n in names:
+        if isinstance(d, dict) and d.get(n):
+            return d[n]
+    return default
+
+
+def _normalize_long(d):
+    """Repairs a long script whose shape is slightly off, so one missing key does not waste a run."""
+    d["hook"] = _get(d, "hook", "intro", "opening", default=[])
+    d["close"] = _get(d, "close", "outro", "ending", "conclusion", "closing", default=[])
+    pts = _get(d, "points", "sections", "body", "parts", default=[])
+    fixed = []
+    for i, p in enumerate(pts if isinstance(pts, list) else []):
+        if isinstance(p, dict):
+            segs = _get(p, "segments", "lines", "content", default=[])
+            fixed.append({"label": str(_get(p, "label", default=f"PART {i + 1}")),
+                          "heading": str(_get(p, "heading", "title", default="")),
+                          "segments": segs})
+    d["points"] = fixed
+    if not d["hook"] and fixed and len(fixed[0]["segments"]) > 3:
+        d["hook"], fixed[0]["segments"] = fixed[0]["segments"][:2], fixed[0]["segments"][2:]
+    if not d["close"] and fixed and len(fixed[-1]["segments"]) > 3:
+        d["close"], fixed[-1]["segments"] = fixed[-1]["segments"][-2:], fixed[-1]["segments"][:-2]
+    for p in fixed:
+        if not p["heading"]:
+            first = _clean_text(p["segments"][0]["text"] if p["segments"] and isinstance(p["segments"][0], dict)
+                                else (p["segments"][0] if p["segments"] else ""))
+            p["heading"] = " ".join(first.split()[:5])
+    for k in ("title", "description", "thumbnail_text", "thumbnail_scene", "comment"):
+        d.setdefault(k, "")
+    d["thumbnail_text"] = d["thumbnail_text"] or " ".join(str(d["title"]).upper().split()[:3])
+    d.setdefault("tags", [])
+    return d
+
+
 def _fix_segments(segs):
     out = []
-    for s in segs:
-        text = _clean_text(s.get("text", ""))
+    for s in segs or []:
+        if isinstance(s, str):                    # plain sentence instead of an object
+            s = {"text": s}
+        if not isinstance(s, dict):
+            continue
+        text = _clean_text(s.get("text", "") or s.get("line", "") or s.get("narration", ""))
         if not text:
             continue
         imp = str(s.get("impact") or "").strip()
@@ -152,7 +193,7 @@ Return ONLY JSON:
 """
     for attempt in range(4):
         try:
-            d = extract_json(ask(cfg, prompt, json_mode=True))
+            d = _normalize_long(extract_json(ask(cfg, prompt, json_mode=True)))
             d["hook"] = _fix_segments(d["hook"])
             d["close"] = _fix_segments(d["close"])
             for p in d["points"]:
@@ -160,13 +201,17 @@ Return ONLY JSON:
                 p["heading"] = _clean_text(p["heading"])
                 p["label"] = _clean_text(p["label"]).upper()
             total = _words(d["hook"]) + _words(d["close"]) + sum(_words(p["segments"]) for p in d["points"])
-            ok = (total >= lo * 0.85 and len(d["points"]) >= 3 and d["hook"] and d["close"]
+            need = lo * (0.85 if attempt < 2 else 0.6)        # later tries: a shorter video beats none
+            ok = (total >= need and len(d["points"]) >= 3 and d["hook"] and d["close"]
                   and all(p["segments"] for p in d["points"]))
             if ok:
                 d.update(theme=theme, format=fmt, research=notes, words=total)
                 log(f"long | {fmt} | {theme} | {total} words | {d['title']}")
                 return d
-            prompt += f"\n\nYour last answer had {total} words or a broken structure. Fix it. Hit {lo}-{hi} words."
+            log(f"long attempt {attempt + 1}: {total} words, {len(d['points'])} points, "
+                f"hook {bool(d['hook'])}, close {bool(d['close'])}: asking again")
+            prompt += (f"\n\nYour last answer had {total} words or a broken structure. Fix it. Hit {lo}-{hi} words. "
+                       "It MUST contain the keys hook, points (at least 3) and close.")
         except Exception as e:
             log(f"long attempt {attempt + 1} failed: {e}")
     raise RuntimeError("Could not write the long script")
@@ -206,9 +251,12 @@ Return ONLY JSON:
     for attempt in range(4):
         try:
             d = extract_json(ask(cfg, prompt, json_mode=True))
-            d["segments"] = _fix_segments(d["segments"])
+            d["segments"] = _fix_segments(_get(d, "segments", "lines", "script", default=[]))
+            for k in ("title", "caption", "comment", "hook_text"):
+                d.setdefault(k, "")
+            d["caption"] = d["caption"] or d["title"]
             total = _words(d["segments"])
-            if lo * 0.8 <= total <= hi * 1.25 and len(d["segments"]) >= 5:
+            if lo * (0.8 if attempt < 2 else 0.6) <= total <= hi * 1.4 and len(d["segments"]) >= 5:
                 d.update(theme=theme, format=style, research=notes, words=total)
                 log(f"short | {style} | {theme} | {total} words | {d['title']}")
                 return d
