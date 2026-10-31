@@ -146,6 +146,59 @@ def _fix_segments(segs):
     return out
 
 
+def _long_total(d):
+    return _words(d["hook"]) + _words(d["close"]) + sum(_words(p["segments"]) for p in d["points"])
+
+
+def _long_ok_shape(d):
+    return len(d["points"]) >= 3 and d["hook"] and d["close"] and all(p["segments"] for p in d["points"])
+
+
+def _expand(cfg, d, theme, notes, target):
+    """Small free models write ~500 words in one go. Here each part is rewritten LONGER on its own
+    (short answers they handle well), until the whole script reaches the target length."""
+    parts = [("hook", "the opening hook", None)] + \
+            [(i, f"{p['label']}: {p['heading']}", i) for i, p in enumerate(d["points"])] + \
+            [("close", "the closing words (keep the subscribe line as the very last segment)", None)]
+    share = {"hook": 0.10, "close": 0.12}
+    point_share = (1 - 0.22) / max(1, len(d["points"]))
+    for key, what, idx in parts:
+        segs = d["points"][idx]["segments"] if idx is not None else d[key]
+        want = int(target * share.get(key, point_share))
+        have = _words(segs)
+        if have >= want * 0.85:
+            continue
+        current = "\n".join("- " + s["text"] for s in segs)
+        prompt = f"""You are expanding one part of a cinematic motivational video script.
+Video title: {d.get('title', '')}
+Theme: {theme}
+This part: {what}
+Research notes (only allowed source of real names, dates, numbers):
+{notes or '(none: do not mention any real person or study)'}
+
+Current lines of this part ({have} words):
+{current}
+
+Rewrite this part to about {want} spoken words (between {int(want * 0.9)} and {int(want * 1.2)}).
+Keep its message, go deeper: a concrete scene, a short example, a question to the viewer, then the action.
+{STYLE_RULES}
+{VISUAL_RULES}
+Return ONLY JSON: {{"segments": [{{"text": "", "visual": "", "visual2": "", "impact": "", "lower_third": ""}}]}}
+Each segment is 1-3 sentences."""
+        try:
+            new = _fix_segments(_get(extract_json(ask(cfg, prompt, json_mode=True)), "segments", default=[]))
+        except Exception as e:
+            log(f"expand {what[:30]}: failed ({str(e)[:120]})")
+            continue
+        if _words(new) > have:
+            if idx is not None:
+                d["points"][idx]["segments"] = new
+            else:
+                d[key] = new
+            log(f"expand {what[:30]}: {have} -> {_words(new)} words")
+    return d
+
+
 def write_long(cfg, history):
     theme = _pick(cfg["themes"], [p.get("theme") for p in history["posts"]])
     fmt = _pick(list(LONG_FORMATS), history.get("long_formats", []))
@@ -191,6 +244,7 @@ Return ONLY JSON:
   "points": [{{"label": "", "heading": "3-6 words", "segments": [{{"text": "", "visual": "", "visual2": "", "impact": "", "lower_third": ""}}]}}],
   "close": [{{"text": "", "visual": "", "visual2": "", "impact": "", "lower_third": ""}}]}}
 """
+    best = None
     for attempt in range(4):
         try:
             d = _normalize_long(extract_json(ask(cfg, prompt, json_mode=True)))
@@ -200,20 +254,27 @@ Return ONLY JSON:
                 p["segments"] = _fix_segments(p["segments"])
                 p["heading"] = _clean_text(p["heading"])
                 p["label"] = _clean_text(p["label"]).upper()
-            total = _words(d["hook"]) + _words(d["close"]) + sum(_words(p["segments"]) for p in d["points"])
-            need = lo * (0.85 if attempt < 2 else 0.6)        # later tries: a shorter video beats none
-            ok = (total >= need and len(d["points"]) >= 3 and d["hook"] and d["close"]
-                  and all(p["segments"] for p in d["points"]))
-            if ok:
-                d.update(theme=theme, format=fmt, research=notes, words=total)
-                log(f"long | {fmt} | {theme} | {total} words | {d['title']}")
-                return d
-            log(f"long attempt {attempt + 1}: {total} words, {len(d['points'])} points, "
-                f"hook {bool(d['hook'])}, close {bool(d['close'])}: asking again")
-            prompt += (f"\n\nYour last answer had {total} words or a broken structure. Fix it. Hit {lo}-{hi} words. "
-                       "It MUST contain the keys hook, points (at least 3) and close.")
+            if not _long_ok_shape(d):
+                log(f"long attempt {attempt + 1}: broken structure ({len(d['points'])} points), asking again")
+                prompt += "\n\nYour last answer had a broken structure. It MUST contain hook, points (at least 3) and close."
+                continue
+            total = _long_total(d)
+            if total < lo * 0.85:
+                log(f"long attempt {attempt + 1}: {total} words, expanding part by part")
+                d = _expand(cfg, d, theme, notes, int((lo + hi) / 2))
+                total = _long_total(d)
+            if best is None or total > _long_total(best):
+                best = d
+            if total >= lo * 0.75:
+                break
+            log(f"long attempt {attempt + 1}: still {total} words, trying again")
         except Exception as e:
             log(f"long attempt {attempt + 1} failed: {e}")
+    if best is not None and _long_total(best) >= 420:        # a ~3-4 min video beats no video
+        total = _long_total(best)
+        best.update(theme=theme, format=fmt, research=notes, words=total)
+        log(f"long | {fmt} | {theme} | {total} words | {best['title']}")
+        return best
     raise RuntimeError("Could not write the long script")
 
 
