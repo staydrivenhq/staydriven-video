@@ -1,12 +1,15 @@
 # STAY DRIVEN autopilot (free GitHub Actions)
-# Long video: 10:41 UTC = US Eastern ~6:41 AM (Bangladesh 4:41 PM)
-# Short/Reel: 22:41 UTC = US Eastern ~6:41 PM (Bangladesh 4:41 AM)
+# Long video:  10:41 UTC = US Eastern ~6:41 AM (Bangladesh 4:41 PM), backup 13:41 UTC (BD 7:41 PM)
+# Short/Reel:  22:41 UTC = US Eastern ~6:41 PM (Bangladesh 4:41 AM), backup 01:41 UTC (BD 7:41 AM)
+# The backup run does nothing if the video already went out.
 name: Stay Driven daily
 
 on:
   schedule:
     - cron: "41 10 * * *"
+    - cron: "41 13 * * *"
     - cron: "41 22 * * *"
+    - cron: "41 1 * * *"
   workflow_dispatch:
     inputs:
       kind:
@@ -49,17 +52,12 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: Cache speech-timing model
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/huggingface
-          key: whisper-base-en-v1
-
       - run: pip install -r requirements.txt
 
       - name: Make (and publish) today's video
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
           PIXABAY_API_KEY: ${{ secrets.PIXABAY_API_KEY }}
@@ -73,8 +71,12 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
           if [ "${{ github.event_name }}" = "schedule" ]; then
-            if [ "${{ github.event.schedule }}" = "41 10 * * *" ]; then KIND=long; else KIND=short; fi
-            ARGS="--kind $KIND"
+            case "${{ github.event.schedule }}" in
+              "41 10 * * *") ARGS="--kind long --attempt 1" ;;
+              "41 13 * * *") ARGS="--kind long --attempt 2" ;;
+              "41 22 * * *") ARGS="--kind short --attempt 1" ;;
+              *)             ARGS="--kind short --attempt 2" ;;
+            esac
           else
             ARGS="--kind ${{ inputs.kind }}"
             [ "${{ inputs.dry_run }}" = "true" ] && ARGS="$ARGS --dry-run"
