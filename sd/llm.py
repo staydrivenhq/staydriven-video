@@ -13,7 +13,8 @@ import time
 import requests
 
 GEMINI = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-GROQ_MODELS = ["llama-3.3-70b-versatile", "openai/gpt-oss-120b", "meta-llama/llama-4-scout-17b-16e-instruct"]
+# Groq free tier (Llama chat models were retired for free users on 2026-08-16)
+GROQ_MODELS = ["openai/gpt-oss-120b", "qwen/qwen3.6-27b", "openai/gpt-oss-20b"]
 CF_MODELS = ["@cf/meta/llama-3.3-70b-instruct-fp8-fast", "@cf/meta/llama-3.1-8b-instruct"]
 DEAD = set()          # models that said "daily quota used up" in this run: skip them
 
@@ -24,6 +25,7 @@ def log(msg):
 
 def extract_json(text: str):
     text = text.strip()
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()     # reasoning models
     text = re.sub(r"^```(?:json)?", "", text).strip()
     text = re.sub(r"```$", "", text).strip()
     a, b = text.find("{"), text.rfind("}")
@@ -69,15 +71,17 @@ def _gemini(model, prompt, json_mode, grounding, temperature):
     return text
 
 
-def _openai_style(url, key, model, name, prompt, json_mode, temperature):
-    body = {"model": model, "temperature": min(temperature, 1.0), "max_tokens": 6000,
-            "messages": [{"role": "user", "content": prompt}]}
-    if json_mode:
-        body["response_format"] = {"type": "json_object"}
-    r = requests.post(url, json=body, timeout=180, headers={"Authorization": f"Bearer {key}"})
-    if r.status_code == 400 and json_mode and "response_format" in r.text:
-        body.pop("response_format")
-        r = requests.post(url, json=body, timeout=180, headers={"Authorization": f"Bearer {key}"})
+def _openai_style(url, key, model, name, prompt, json_mode, temperature, extra=None):
+    body = {"model": model, "temperature": min(temperature, 1.0), "max_tokens": 7000,
+            "messages": [{"role": "user", "content": prompt + ("\n\nAnswer with the JSON only." if json_mode else "")}]}
+    body.update(extra or {})
+    # No strict JSON mode: some servers reject a long answer over one small JSON slip.
+    # extract_json() cleans and parses the answer instead.
+    r = requests.post(url, json=body, timeout=240, headers={"Authorization": f"Bearer {key}"})
+    if r.status_code == 400 and extra and any(k in r.text for k in extra):
+        for k in extra:
+            body.pop(k, None)                  # server does not know an optional setting: drop it
+        r = requests.post(url, json=body, timeout=240, headers={"Authorization": f"Bearer {key}"})
     _check(r, name)
     text = r.json()["choices"][0]["message"]["content"] or ""
     if not text.strip():
@@ -86,8 +90,13 @@ def _openai_style(url, key, model, name, prompt, json_mode, temperature):
 
 
 def _groq(model, prompt, json_mode, temperature):
+    extra = {}
+    if "gpt-oss" in model:
+        extra = {"reasoning_effort": "low"}          # less thinking = more room for the script
+    elif "qwen" in model:
+        extra = {"reasoning_format": "hidden"}       # no <think> text in the answer
     return _openai_style("https://api.groq.com/openai/v1/chat/completions", os.environ["GROQ_API_KEY"],
-                         model, "groq/" + model, prompt, json_mode, temperature)
+                         model, "groq/" + model, prompt, json_mode, temperature, extra)
 
 
 def _cloudflare(model, prompt, json_mode, temperature):
