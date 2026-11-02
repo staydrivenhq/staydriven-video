@@ -5,7 +5,7 @@ import random
 import subprocess
 from pathlib import Path
 
-from . import audio, captions
+from . import audio, captions, mix
 from .util import ROOT, ffprobe_duration, log, run
 
 DIMS = {"long": (1920, 1080), "short": (1080, 1920)}
@@ -191,15 +191,15 @@ def make_audio(kind, segs, total, sfx_events, cfg, work, seed):
     if tracks:
         music = random.choice(tracks)
         log(f"music: {music.name}")
-        mus_args = ["-stream_loop", "-1", "-i", str(music)]
+        user_track = True
     else:
-        music = audio.make_score(total + 1, intensity_fn(kind, segs, total), work / "score.wav", seed,
+        music = audio.make_score(total + 2, intensity_fn(kind, segs, total), work / "score.wav", seed,
                                  bpm=random.choice([68, 72, 76]))
-        mus_args = ["-i", str(music)]
+        user_track = False
     sfx_path = None
     if cfg.get("sfx", True) and sfx_events:
-        sfx_path = audio.make_sfx(total + 1, sfx_events, work / "sfx.wav")
-    return mus_args, sfx_path
+        sfx_path = audio.make_sfx(total + 2, sfx_events, work / "sfx.wav")
+    return (music, user_track), sfx_path
 
 
 # ------------------------------------------------------------ final
@@ -219,7 +219,7 @@ def finish(kind, footage, voice, ass, mus_args, sfx_path, cfg, total, out, look=
         bar = 96
         v += f",drawbox=x=0:y=0:w=iw:h={bar}:color=black:t=fill,drawbox=x=0:y=ih-{bar}:w=iw:h={bar}:color=black:t=fill"
     v += f",ass={ass.name}:fontsdir={ROOT / 'fonts'}"
-    inputs = ["-i", footage.name, "-i", voice.name] + mus_args
+    inputs = ["-i", footage.name]
     logo = LOGO.exists() and cfg.get("brand_watermark", True)
     v += "[base]"
     chain = v
@@ -244,29 +244,22 @@ def finish(kind, footage, voice, ass, mus_args, sfx_path, cfg, total, out, look=
         last = "[base]"
     chain += f";{last}fade=t=in:st=0:d=0.35,fade=t=out:st={end - 0.7:.2f}:d=0.7,format=yuv420p[v]"
     v = chain
-    a = (f"[1:a]aformat=channel_layouts=stereo,apad[vo];[vo]asplit=2[vo1][vo2];"
-         f"[2:a]aformat=channel_layouts=stereo,volume={cfg.get('music_volume', 0.16) * 2.2:.3f},"
-         f"afade=t=out:st={end - 2.5:.2f}:d=2.5[mu];"
-         f"[mu][vo2]sidechaincompress=threshold=0.03:ratio=6:attack=15:release=450[duck];")
-    mix_in = "[vo1][duck]"
-    n = 2
-    if sfx_path:
-        inputs += ["-i", str(sfx_path)]
-        a += "[3:a]aformat=channel_layouts=stereo,volume=0.9[fx];"
-        mix_in += "[fx]"
-        n = 3
     if logo:
         v = v.replace("[LOGO]", f"[{_count_inputs(inputs)}:v]")
         inputs += extra
-    a += (f"{mix_in}amix=inputs={n}:duration=first:normalize=0,"
-          f"loudnorm=I=-14:TP=-1.5:LRA=11,aresample=48000[a]")
+    # audio: mixed in numpy (sd/mix.py) and checked, then simply encoded
+    music, user_track = mus_args
+    mixed = mix.build(voice, music, sfx_path, end, cfg, out.parent / "mix.wav", user_track=user_track)
+    a_index = _count_inputs(inputs)
+    inputs += ["-i", str(mixed)]
     rate = ["-crf", "21", "-maxrate", "8M", "-bufsize", "16M"] if kind == "long" else \
         ["-crf", "19", "-maxrate", "14M", "-bufsize", "28M"]
-    run(["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", f"{v};{a}",
-         "-map", "[v]", "-map", "[a]", "-t", f"{end:.2f}", "-c:v", "libx264", "-preset", "fast" if kind == "long" else "medium",
+    run(["ffmpeg", "-y", "-loglevel", "error", *inputs, "-filter_complex", v,
+         "-map", "[v]", "-map", f"{a_index}:a", "-t", f"{end:.2f}", "-c:v", "libx264", "-preset", "fast" if kind == "long" else "medium",
          "-profile:v", "high", "-pix_fmt", "yuv420p", *rate, "-g", "60", "-c:a", "aac", "-b:a", "256k",
          "-movflags", "+faststart", out.name], cwd=out.parent, timeout=5400)
     log(f"{kind} final: {out.name} {ffprobe_duration(out):.1f}s {out.stat().st_size / 1e6:.0f} MB")
+    mix.verify_video(out, voice)
 
 
 def make_video(kind, segs, voice, total, cfg, picker, work: Path, hook_text=None, seed=1):
