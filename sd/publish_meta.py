@@ -11,7 +11,14 @@ G = f"https://graph.facebook.com/{V}"
 
 
 def _tok():
-    return os.environ["FB_PAGE_TOKEN"]
+    # copy-paste safety: spaces, new lines or quotes around the token make Facebook reject it
+    t = os.environ.get("FB_PAGE_TOKEN", "").strip().strip('"').strip("'").strip()
+    t = "".join(t.split())
+    if not t:
+        raise RuntimeError("FB_PAGE_TOKEN secret is empty")
+    if len(t) < 100:
+        raise RuntimeError(f"FB_PAGE_TOKEN looks cut off ({len(t)} characters, a Page token is usually 150-250)")
+    return t
 
 
 # ---------------- Facebook ----------------
@@ -59,7 +66,8 @@ def fb_video(path, title, description):
 def fb_reel(path, description):
     page = os.environ["FB_PAGE_ID"]
     r = requests.post(f"{G}/{page}/video_reels", data={"upload_phase": "start", "access_token": _tok()}, timeout=60)
-    r.raise_for_status()
+    if not r.ok:
+        raise RuntimeError("Facebook reel start failed: " + r.text[:300])
     vid, url = r.json()["video_id"], r.json()["upload_url"]
     size = os.path.getsize(path)
     with open(path, "rb") as fh:
