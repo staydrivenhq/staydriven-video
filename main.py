@@ -197,9 +197,38 @@ def summary_note(text):
             fh.write(text + "\n")
 
 
+def run_post(cfg, hist, dry):
+    """Facebook quote card (image + caption)."""
+    from sd import quotepost
+    day = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+    work = OUT / f"{day}_post_{dt.datetime.now(dt.timezone.utc).strftime('%H%M')}"
+    work.mkdir(parents=True, exist_ok=True)
+    d = quotepost.write(cfg, hist)
+    used = set(hist["used_footage"])
+    photo = quotepost.find_photo(d["photo"], used)
+    hist["used_footage"] = list(used)
+    img = quotepost.design(d, photo, work / "post.jpg")
+    rec = {"date": day, "ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"), "kind": "post",
+           "format": d["style"], "theme": d["theme"], "title": d["quote"][:80], "quote": d["quote"]}
+    errors = []
+    if dry:
+        log(f"DRY RUN: {img}")
+    else:
+        try:
+            from sd import publish_meta
+            rec["facebook"] = publish_meta.fb_photo(img, quotepost.caption_text(d, cfg))
+        except Exception as e:
+            traceback.print_exc()
+            errors.append(f"Facebook post: {str(e)[:300]}")
+    hist["posts"].append(rec)
+    summary_note(f"## Post: {d['quote']}\n\n" + (f"Facebook ✅ {rec.get('facebook', '(dry run)')}" if not errors
+                                                   else f"Facebook ❌ {errors[0]}"))
+    return errors
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--kind", choices=["long", "short"], default="short")
+    ap.add_argument("--kind", choices=["long", "short", "post"], default="short")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--voice-test", action="store_true")
     ap.add_argument("--attempt", type=int, default=0,
@@ -215,7 +244,8 @@ def main():
         summary_note(f"## Backup run: today's {a.kind} video was already posted, nothing to do ✅")
         return
     try:
-        errors = run_kind(a.kind, cfg, hist, a.dry_run)
+        errors = (run_post(cfg, hist, a.dry_run) if a.kind == "post"
+                  else run_kind(a.kind, cfg, hist, a.dry_run))
     except Exception as e:
         save_history(hist)
         if a.attempt == 1:
