@@ -159,3 +159,25 @@ def _temp_public_url(path):
         requests.delete(f"https://api.github.com/repos/{repo}/releases/{rid}", headers=H, timeout=60)
         requests.delete(f"https://api.github.com/repos/{repo}/git/refs/tags/{tag}", headers=H, timeout=60)
     return url, cleanup
+
+
+def fb_photo(path, message):
+    """Image post on the Page feed (quote cards)."""
+    page = os.environ["FB_PAGE_ID"]
+    for attempt in range(3):
+        try:
+            with open(path, "rb") as fh:
+                r = requests.post(f"{G}/{page}/photos", timeout=180,
+                                  data={"access_token": _tok(), "message": message, "published": "true"},
+                                  files={"source": (os.path.basename(path), fh, "image/jpeg")})
+            if r.ok:
+                pid = r.json().get("post_id") or r.json().get("id")
+                log(f"facebook: photo posted {pid}")
+                return pid
+            last = r.text[:300]
+            if r.status_code < 500:
+                break
+        except requests.RequestException as e:
+            last = str(e)[:300]
+        time.sleep(15)
+    raise RuntimeError("Facebook photo failed: " + last)
