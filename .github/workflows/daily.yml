@@ -1,6 +1,7 @@
 # STAY DRIVEN autopilot (free GitHub Actions)
 # Long video:  10:41 UTC = US Eastern ~6:41 AM (Bangladesh 4:41 PM), backup 13:41 UTC (BD 7:41 PM)
 # Short/Reel:  22:41 UTC = US Eastern ~6:41 PM (Bangladesh 4:41 AM), backup 01:41 UTC (BD 7:41 AM)
+# Facebook quote posts: 15:11 UTC (US ~11 AM ET, BD 9:11 PM) and 00:11 UTC (US ~8 PM ET, BD 6:11 AM)
 # The backup run does nothing if the video already went out.
 name: Stay Driven daily
 
@@ -10,12 +11,14 @@ on:
     - cron: "41 13 * * *"
     - cron: "41 22 * * *"
     - cron: "41 1 * * *"
+    - cron: "11 15 * * *"
+    - cron: "11 0 * * *"
   workflow_dispatch:
     inputs:
       kind:
         description: "long ba short"
         type: choice
-        options: [short, long]
+        options: [short, long, post]
         default: short
       dry_run:
         description: "Shudhu video banabe, post korbe na (test)"
@@ -75,7 +78,8 @@ jobs:
               "41 10 * * *") ARGS="--kind long --attempt 1" ;;
               "41 13 * * *") ARGS="--kind long --attempt 2" ;;
               "41 22 * * *") ARGS="--kind short --attempt 1" ;;
-              *)             ARGS="--kind short --attempt 2" ;;
+              "41 1 * * *")  ARGS="--kind short --attempt 2" ;;
+              *)             ARGS="--kind post" ;;
             esac
           else
             ARGS="--kind ${{ inputs.kind }}"
@@ -93,6 +97,7 @@ jobs:
           path: |
             output/**/*.mp4
             output/**/thumbnail.jpg
+            output/**/post.jpg
             output/**/script.json
             output/**/captions.srt
             output/voice-test/*
