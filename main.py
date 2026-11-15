@@ -1,6 +1,7 @@
 """STAY DRIVEN autopilot.
-  python main.py --kind long        # 6-8 min cinematic video -> YouTube + Facebook
-  python main.py --kind short       # 40-55 sec vertical -> YouTube Shorts + FB Reel + IG Reel
+  python main.py --kind long            # 6-8 min cinematic video -> YouTube + Facebook
+  python main.py --kind short           # 40-55 sec vertical -> YouTube Shorts + FB Reel + IG Reel
+  python main.py --kind short --slot 2  # diner ditio reel (slot 1 er sathe conflict korbe na)
   --dry-run       sudhu banabe, post korbe na
   --voice-test    koyekta voice er sample banabe (pochondo korar jonno)
 """
@@ -59,9 +60,11 @@ def long_description(d, segs, cfg, music_note):
             + f"Footage: Pexels and Pixabay. {music_note}\n\n{tags}")
 
 
-def run_kind(kind, cfg, hist, dry):
+def run_kind(kind, cfg, hist, dry, slot=1):
     day = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
-    work = OUT / f"{day}_{kind}"
+    # slot 1 ar slot 2 er folder alada, nahole ditio reel prothom tar folder muchhe felbe
+    tag = kind if kind == "long" else f"{kind}{slot}"
+    work = OUT / f"{day}_{tag}"
     if work.exists():
         shutil.rmtree(work)
     work.mkdir(parents=True)
@@ -105,7 +108,8 @@ def run_kind(kind, cfg, hist, dry):
         f.unlink()
 
     rec = {"date": day, "ts": dt.datetime.now(dt.timezone.utc).isoformat(timespec="minutes"),
-           "kind": kind, "theme": d["theme"], "format": d["format"], "title": d["title"]}
+           "kind": kind, "slot": slot,
+           "theme": d["theme"], "format": d["format"], "title": d["title"]}
     hist["used_footage"] = list(used)
     (hist["long_formats"] if kind == "long" else hist["short_styles"]).append(d["format"])
     errors = []
@@ -155,6 +159,7 @@ def write_summary(kind, title, cfg, rec, errors):
     """Run page e ekta chhoto table: kon platform e post holo, kon ta holo na ar keno."""
     import os
     path = os.environ.get("GITHUB_STEP_SUMMARY")
+    heading = f"{kind.title()} (reel {rec.get('slot', 1)})" if kind == "short" else kind.title()
     rows = []
     links = {"youtube": lambda v: f"https://youtu.be/{v}",
              "facebook": lambda v: f"https://www.facebook.com/{v}",
@@ -167,18 +172,21 @@ def write_summary(kind, title, cfg, rec, errors):
         else:
             why = next((e.split(": ", 1)[-1] for e in errors if e.startswith(name)), "not posted")
             rows.append(f"| {name} | ❌ | {why.replace('|', '/')} |")
-    text = f"## {kind.title()}: {title}\n\n| Platform | Status | Link / error |\n|---|---|---|\n" + "\n".join(rows) + "\n"
+    text = f"## {heading}: {title}\n\n| Platform | Status | Link / error |\n|---|---|---|\n" + "\n".join(rows) + "\n"
     log("SUMMARY\n" + text)
     if path:
         with open(path, "a") as fh:
             fh.write(text)
 
 
-def already_posted(hist, kind, hours=20):
-    """True if a real (published) video of this kind went out in the last `hours`."""
+def already_posted(hist, kind, slot=1, hours=20):
+    """True if a real (published) video of this kind and slot went out in the last `hours`.
+    Slot check is what lets two reels a day both get their own backup run."""
     now = dt.datetime.now(dt.timezone.utc)
     for p in reversed(hist["posts"]):
-        if p.get("kind") != kind or not (p.get("youtube") or p.get("facebook") or p.get("instagram")):
+        if p.get("kind") != kind or p.get("slot", 1) != slot:
+            continue
+        if not (p.get("youtube") or p.get("facebook") or p.get("instagram")):
             continue
         if p.get("ts"):
             when = dt.datetime.fromisoformat(p["ts"])
@@ -229,30 +237,33 @@ def run_post(cfg, hist, dry):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--kind", choices=["long", "short", "post"], default="short")
+    ap.add_argument("--slot", type=int, choices=[1, 2], default=1,
+                    help="short er slot: 1 = prothom reel, 2 = ditio reel (long/post er jonno always 1)")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--voice-test", action="store_true")
     ap.add_argument("--attempt", type=int, default=0,
                     help="1 = scheduled main run, 2 = scheduled backup run, 0 = by hand")
     a = ap.parse_args()
+    slot = a.slot if a.kind == "short" else 1
     cfg = yaml.safe_load((ROOT / "config.yaml").read_text())
     OUT.mkdir(exist_ok=True)
     if a.voice_test:
         voice.voice_test(cfg, OUT / "voice-test")
         return
     hist = load_history()
-    if a.attempt == 2 and already_posted(hist, a.kind):
-        summary_note(f"## Backup run: today's {a.kind} video was already posted, nothing to do ✅")
+    if a.attempt == 2 and already_posted(hist, a.kind, slot):
+        summary_note(f"## Backup run: today's {a.kind} (reel {slot}) was already posted, nothing to do ✅")
         return
     try:
         errors = (run_post(cfg, hist, a.dry_run) if a.kind == "post"
-                  else run_kind(a.kind, cfg, hist, a.dry_run))
+                  else run_kind(a.kind, cfg, hist, a.dry_run, slot))
     except Exception as e:
         save_history(hist)
         if a.attempt == 1:
             # AI / voice / footage service down: no failed e-mail yet, the backup run tries again later
             traceback.print_exc()
-            summary_note(f"## {a.kind.title()}: could not be made this time\n\nReason: {str(e)[:300]}\n\n"
-                         f"Nothing was posted. The backup run will try again in about 3 hours.")
+            summary_note(f"## {a.kind.title()} (reel {slot}): could not be made this time\n\n"
+                         f"Reason: {str(e)[:300]}\n\nNothing was posted. The backup run will try again in about 3 hours.")
             return
         raise
     finally:
