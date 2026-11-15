@@ -1,25 +1,40 @@
 # STAY DRIVEN autopilot (free GitHub Actions)
-# Long video:  10:41 UTC = US Eastern ~6:41 AM (Bangladesh 4:41 PM), backup 13:41 UTC (BD 7:41 PM)
-# Short/Reel:  22:41 UTC = US Eastern ~6:41 PM (Bangladesh 4:41 AM), backup 01:41 UTC (BD 7:41 AM)
-# Facebook quote posts: 15:11 UTC (US ~11 AM ET, BD 9:11 PM) and 00:11 UTC (US ~8 PM ET, BD 6:11 AM)
-# The backup run does nothing if the video already went out.
+#
+# EKHON DIN E 3TA VIDEO: 1ta long + 2ta reel/short
+#
+# Bangladesh somoy (UTC+6):
+#   4:41 PM  long        (backup 7:41 PM)
+#   9:11 PM  quote post
+#  10:41 PM  REEL 1      (backup 1:41 AM)
+#   4:41 AM  REEL 2      (backup 7:41 AM)
+#   6:11 AM  quote post
+#
+# Kono backup run nijer slot age post hoye gele kichu kore na.
+# Reel 1 ar Reel 2 er folder alada, tai ekta arektake muchhe fele na.
 name: Stay Driven daily
 
 on:
   schedule:
-    - cron: "41 10 * * *"
-    - cron: "41 13 * * *"
-    - cron: "41 22 * * *"
-    - cron: "41 1 * * *"
-    - cron: "11 15 * * *"
-    - cron: "11 0 * * *"
+    - cron: "41 1 * * *"    # BD 7:41 AM   reel 2 backup
+    - cron: "41 10 * * *"   # BD 4:41 PM   long main
+    - cron: "41 13 * * *"   # BD 7:41 PM   long backup
+    - cron: "11 15 * * *"   # BD 9:11 PM   quote post
+    - cron: "41 16 * * *"   # BD 10:41 PM  reel 1 main
+    - cron: "41 19 * * *"   # BD 1:41 AM   reel 1 backup
+    - cron: "41 22 * * *"   # BD 4:41 AM   reel 2 main
+    - cron: "11 0 * * *"    # BD 6:11 AM   quote post
   workflow_dispatch:
     inputs:
       kind:
-        description: "long ba short"
+        description: "long / short / post"
         type: choice
         options: [short, long, post]
         default: short
+      slot:
+        description: "short er jonno: 1 = prothom reel, 2 = ditio reel"
+        type: choice
+        options: ["1", "2"]
+        default: "1"
       dry_run:
         description: "Shudhu video banabe, post korbe na (test)"
         type: boolean
@@ -73,18 +88,29 @@ jobs:
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          set -euo pipefail
           if [ "${{ github.event_name }}" = "schedule" ]; then
             case "${{ github.event.schedule }}" in
               "41 10 * * *") ARGS="--kind long --attempt 1" ;;
               "41 13 * * *") ARGS="--kind long --attempt 2" ;;
-              "41 22 * * *") ARGS="--kind short --attempt 1" ;;
-              "41 1 * * *")  ARGS="--kind short --attempt 2" ;;
+              "41 16 * * *") ARGS="--kind short --slot 1 --attempt 1" ;;
+              "41 19 * * *") ARGS="--kind short --slot 1 --attempt 2" ;;
+              "41 22 * * *") ARGS="--kind short --slot 2 --attempt 1" ;;
+              "41 1 * * *")  ARGS="--kind short --slot 2 --attempt 2" ;;
               *)             ARGS="--kind post" ;;
             esac
           else
-            ARGS="--kind ${{ inputs.kind }}"
-            [ "${{ inputs.dry_run }}" = "true" ] && ARGS="$ARGS --dry-run"
-            [ "${{ inputs.voice_test }}" = "true" ] && ARGS="--voice-test"
+            if [ "${{ inputs.voice_test }}" = "true" ]; then
+              ARGS="--voice-test"
+            else
+              ARGS="--kind ${{ inputs.kind }}"
+              if [ "${{ inputs.kind }}" = "short" ]; then
+                ARGS="$ARGS --slot ${{ inputs.slot }}"
+              fi
+              if [ "${{ inputs.dry_run }}" = "true" ]; then
+                ARGS="$ARGS --dry-run"
+              fi
+            fi
           fi
           echo "Running: python main.py $ARGS"
           python main.py $ARGS
